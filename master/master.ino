@@ -8,8 +8,12 @@
 
 Adafruit_VL53L1X vl53(XSHUT_PIN, IRQ_PIN);
 
-// Replace with your slave’s MAC
-uint8_t slaveMAC[6] = {0xC8,0xF0,0x9E,0x9B,0x73,0xAC};
+// Target peers
+uint8_t peerMACs[][6] = {
+  {0xC8, 0xF0, 0x9E, 0x9A, 0x93, 0xD4},
+  {0xC8, 0xF0, 0x9E, 0x9A, 0x9A, 0x84}
+};
+const size_t NUM_PEERS = sizeof(peerMACs) / sizeof(peerMACs[0]);
 
 void setup() {
   Serial.begin(115200);
@@ -21,12 +25,22 @@ void setup() {
     Serial.println("ESP-NOW init failed");
     while (1);
   }
-  // Register slave as peer
-  esp_now_peer_info_t peer = {};
-  memcpy(peer.peer_addr, slaveMAC, 6);
-  peer.channel = 0;         // 0 = use current
-  peer.encrypt = false;
-  esp_now_add_peer(&peer);
+
+  // Register each peer
+  for (size_t i = 0; i < NUM_PEERS; i++) {
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, peerMACs[i], 6);
+    peer.channel = 0;       // use current channel
+    peer.encrypt = false;
+    if (esp_now_add_peer(&peer) != ESP_OK) {
+      Serial.print("Failed to add peer "); 
+      for (int b = 0; b < 6; b++) {
+        if (b) Serial.print(":");
+        Serial.printf("%02X", peerMACs[i][b]);
+      }
+      Serial.println();
+    }
+  }
 
   // VL53L1X init
   Wire.begin();
@@ -47,7 +61,19 @@ void loop() {
       char msg[6];
       int len = snprintf(msg, sizeof(msg), "D=%d", d);
       Serial.print("TX: "); Serial.println(msg);
-      esp_now_send(slaveMAC, (uint8_t*)msg, len);
+
+      // Send the same message to all peers
+      for (size_t i = 0; i < NUM_PEERS; i++) {
+        esp_err_t r = esp_now_send(peerMACs[i], (uint8_t*)msg, len);
+        if (r != ESP_OK) {
+          Serial.print("Send failed to ");
+          for (int b = 0; b < 6; b++) {
+            if (b) Serial.print(":");
+            Serial.printf("%02X", peerMACs[i][b]);
+          }
+          Serial.printf(" (err=%d)\n", r);
+        }
+      }
     }
     vl53.clearInterrupt();
   }
